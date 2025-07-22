@@ -1,180 +1,224 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <title>睡眠＆気分ログ</title>
-  <style>
-    body {
-      font-family: sans-serif;
-      background-color: #f9f9f9;
-      padding: 20px;
-    }
-    textarea, input[type="range"] {
-      width: 100%;
-      margin-bottom: 10px;
-    }
-    button {
-      padding: 8px 14px;
-      font-size: 14px;
-      margin-right: 8px;
-    }
-    ul {
-      margin-top: 20px;
-      padding-left: 20px;
-    }
-    li {
-      margin-bottom: 10px;
-      white-space: pre-line;
-    }
-    .mood-label {
-      display: flex;
-      justify-content: space-between;
-      font-size: 14px;
-      margin-bottom: 5px;
-    }
-    .log-entry {
-      border: 1px solid #ccc;
-      padding: 10px;
-      border-radius: 8px;
-      background: white;
-    }
-  </style>
+<meta charset="UTF-8" />
+<title>睡眠・気分ログアプリ（編集・削除・CSV出力付き）</title>
+<style>
+  body {
+    font-family: sans-serif;
+    padding: 20px;
+  }
+  input, select, textarea, button {
+    display: block;
+    margin-bottom: 10px;
+    padding: 5px;
+    width: 200px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+    word-break: break-word;
+  }
+  th, td {
+    border: 1px solid #ccc;
+    padding: 8px;
+    vertical-align: top;
+    text-align: center;
+  }
+  th {
+    background: #f0f0f0;
+  }
+  button {
+    width: auto;
+    margin-right: 5px;
+  }
+  pre {
+    white-space: pre-wrap;
+    margin: 0;
+  }
+</style>
 </head>
 <body>
-  <h1>🛌 睡眠＆気分ログ</h1>
+  <h1>睡眠・気分ログアプリ</h1>
 
-  <textarea id="log" placeholder="昨夜の睡眠についてメモ..."></textarea>
+  <form id="sleepForm">
+    <input type="hidden" id="editIndex" value="-1" />
+    <label>🗓 日付:
+      <input type="date" id="date" required />
+    </label>
+    <label>🛏 就寝時間:
+      <input type="time" id="sleepTime" required />
+    </label>
+    <label>💊 眠剤の種類・量（任意）:
+      <input type="text" id="medicine" />
+    </label>
+    <label>🌃 中途覚醒:
+      <select id="wokeUp">
+        <option value="なし">なし</option>
+        <option value="あり">あり</option>
+      </select>
+    </label>
+    <label>⏰ 起床時間:
+      <input type="time" id="wakeTime" required />
+    </label>
+    <label>😌 今日の気分（1〜5）:
+      <input type="number" id="mood" min="1" max="5" required />
+    </label>
+    <label for="memo">📝 今日のメモ（自由記述）:
+      <textarea id="memo" rows="4" cols="40" placeholder="例：眠気がある"></textarea>
+    </label>
+    <button type="submit">記録</button>
+    <button type="button" id="cancelEdit" style="display:none;">編集キャンセル</button>
+  </form>
 
-  <div class="mood-label">
-    <span>😔 鬱（1）</span><span>🧘 安定（3）</span><span>😄 躁（5）</span>
-  </div>
-  <input type="range" id="mood" min="1" max="5" value="3" />
+  <button id="exportCsvBtn" type="button" style="margin-top:20px;">CSVでエクスポート</button>
 
-  <button onclick="saveLog()" id="saveBtn">保存</button>
-  <button onclick="updateLog()" style="display:none;" id="updateBtn">更新</button>
-  <button onclick="downloadLogs()">テキストで保存</button>
+  <table id="logTable">
+    <thead>
+      <tr>
+        <th>日付</th>
+        <th>就寝時間</th>
+        <th>眠剤</th>
+        <th>中途覚醒</th>
+        <th>起床時間</th>
+        <th>今日の気分</th>
+        <th>メモ</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
 
-  <h2>📅 過去のログ</h2>
-  <ul id="logList"></ul>
+<script>
+  const form = document.getElementById('sleepForm');
+  const editIndexInput = document.getElementById('editIndex');
+  const logTableBody = document.querySelector('#logTable tbody');
+  const cancelEditBtn = document.getElementById('cancelEdit');
+  const exportCsvBtn = document.getElementById('exportCsvBtn');
 
-  <script>
-    const logList = document.getElementById("logList");
-    const updateBtn = document.getElementById("updateBtn");
-    const saveBtn = document.getElementById("saveBtn");
-    const logElem = document.getElementById("log");
-    const moodElem = document.getElementById("mood");
+  const storageKey = 'sleepLogs';
 
-    let editingIndex = null;
+  function loadLogs() {
+    return JSON.parse(localStorage.getItem(storageKey) || '[]');
+  }
 
-    // ページ読み込み時に必ず入力欄を有効化＆フォーカス
-    window.onload = () => {
-      enableInput();
+  function saveLogs(logs) {
+    localStorage.setItem(storageKey, JSON.stringify(logs));
+  }
+
+  function renderLogs(logs) {
+    logTableBody.innerHTML = '';
+    logs.forEach((log, index) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${log.date}</td>
+        <td>${log.sleepTime}</td>
+        <td>${log.medicine || ''}</td>
+        <td>${log.wokeUp}</td>
+        <td>${log.wakeTime}</td>
+        <td>${log.mood}</td>
+        <td><pre>${log.memo || ''}</pre></td>
+        <td>
+          <button type="button" onclick="editLog(${index})">編集</button>
+          <button type="button" onclick="deleteLog(${index})">削除</button>
+        </td>
+      `;
+      logTableBody.appendChild(tr);
+    });
+  }
+
+  function clearForm() {
+    form.reset();
+    editIndexInput.value = -1;
+    cancelEditBtn.style.display = 'none';
+  }
+
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    const logs = loadLogs();
+    const editIndex = parseInt(editIndexInput.value, 10);
+
+    const entry = {
+      date: form.date.value,
+      sleepTime: form.sleepTime.value,
+      medicine: form.medicine.value,
+      wokeUp: form.wokeUp.value,
+      wakeTime: form.wakeTime.value,
+      mood: form.mood.value,
+      memo: form.memo.value
     };
 
-    function enableInput() {
-      logElem.disabled = false;
-      logElem.readOnly = false;
-      moodElem.disabled = false;
-      logElem.style.opacity = '1';
-      logElem.style.visibility = 'visible';
-      logElem.style.pointerEvents = 'auto';
-      logElem.style.position = 'static';
-      logElem.focus();
+    if (editIndex >= 0) {
+      logs[editIndex] = entry;
+    } else {
+      logs.unshift(entry);
     }
 
-    function saveLog() {
-      const log = logElem.value.trim();
-      const mood = moodElem.value;
-      if (!log) return;
+    saveLogs(logs);
+    renderLogs(logs);
+    clearForm();
+  });
 
-      const date = new Date().toLocaleString();
-      const item = { date, mood, log };
+  window.editLog = function(index) {
+    const logs = loadLogs();
+    const log = logs[index];
+    form.date.value = log.date;
+    form.sleepTime.value = log.sleepTime;
+    form.medicine.value = log.medicine;
+    form.wokeUp.value = log.wokeUp;
+    form.wakeTime.value = log.wakeTime;
+    form.mood.value = log.mood;
+    form.memo.value = log.memo;
+    editIndexInput.value = index;
+    cancelEditBtn.style.display = 'inline-block';
+  };
 
-      let logs = JSON.parse(localStorage.getItem("sleepLogs") || "[]");
-      logs.push(item);
-      localStorage.setItem("sleepLogs", JSON.stringify(logs));
+  window.deleteLog = function(index) {
+    if (!confirm('この記録を削除してもよろしいですか？')) return;
+    const logs = loadLogs();
+    logs.splice(index, 1);
+    saveLogs(logs);
+    renderLogs(logs);
+    clearForm();
+  };
 
-      resetForm();
-      showLogs();
+  cancelEditBtn.addEventListener('click', () => {
+    clearForm();
+  });
+
+  exportCsvBtn.addEventListener('click', () => {
+    const logs = loadLogs();
+    if (logs.length === 0) {
+      alert('記録がありません');
+      return;
     }
 
-    function updateLog() {
-      const log = logElem.value.trim();
-      const mood = moodElem.value;
-      if (editingIndex === null || !log) return;
+    const header = ['日付', '就寝時間', '眠剤', '中途覚醒', '起床時間', '今日の気分', 'メモ'];
+    const csvRows = [
+      header.join(','),
+      ...logs.map(log => [
+        log.date,
+        log.sleepTime,
+        `"${log.medicine || ''}"`,
+        log.wokeUp,
+        log.wakeTime,
+        log.mood,
+        `"${(log.memo || '').replace(/"/g, '""')}"`
+      ].join(','))
+    ];
+    const csvString = csvRows.join('\n');
+    const blob = new Blob([csvString], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'sleep_logs.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
 
-      let logs = JSON.parse(localStorage.getItem("sleepLogs") || "[]");
-      logs[editingIndex].log = log;
-      logs[editingIndex].mood = mood;
-      localStorage.setItem("sleepLogs", JSON.stringify(logs));
-
-      resetForm();
-      showLogs();
-    }
-
-    function deleteLog(index) {
-      let logs = JSON.parse(localStorage.getItem("sleepLogs") || "[]");
-      logs.splice(index, 1);
-      localStorage.setItem("sleepLogs", JSON.stringify(logs));
-      if (editingIndex === index) resetForm();
-      showLogs();
-    }
-
-    function editLog(index) {
-      const logs = JSON.parse(localStorage.getItem("sleepLogs") || "[]");
-      const entry = logs[index];
-      logElem.value = entry.log;
-      moodElem.value = entry.mood;
-      editingIndex = index;
-      saveBtn.style.display = "none";
-      updateBtn.style.display = "inline-block";
-
-      // ここで強制的に入力可能＆フォーカスを当てる
-      enableInput();
-    }
-
-    function resetForm() {
-      logElem.value = "";
-      moodElem.value = 3;
-      editingIndex = null;
-      saveBtn.style.display = "inline-block";
-      updateBtn.style.display = "none";
-
-      enableInput();
-    }
-
-    function showLogs() {
-      logList.innerHTML = "";
-      const logs = JSON.parse(localStorage.getItem("sleepLogs") || "[]");
-      logs.slice().reverse().forEach((entry, i) => {
-        const realIndex = logs.length - 1 - i;
-        const li = document.createElement("li");
-        li.className = "log-entry";
-        li.innerHTML = `
-          <strong>${entry.date}</strong> | 気分: ${entry.mood} / 5<br>
-          ${entry.log}<br><br>
-          <button onclick="editLog(${realIndex})">✏️ 編集</button>
-          <button onclick="deleteLog(${realIndex})" style="color:red;">🗑️ 削除</button>
-        `;
-        logList.appendChild(li);
-      });
-    }
-
-    function downloadLogs() {
-      const logs = JSON.parse(localStorage.getItem("sleepLogs") || "[]");
-      const text = logs.map(entry => `${entry.date} | 気分: ${entry.mood} / 5\n${entry.log}`).join('\n\n');
-      const blob = new Blob([text], { type: "text/plain" });
-      const url = URL.createObjectURL(blob);
-
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "sleep_mood_logs.txt";
-      a.click();
-
-      URL.revokeObjectURL(url);
-    }
-
-    showLogs();
-  </script>
+  // 初期表示
+  renderLogs(loadLogs());
+</script>
 </body>
 </html>
